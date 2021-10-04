@@ -1,6 +1,7 @@
-import datetime
 import os
 import socket
+
+from utils import create_http_response, reap_children, valid_path
 
 
 def create_serv(port):
@@ -11,7 +12,6 @@ def create_serv(port):
 
 def accept_client_conn(serv, cid):
     client_sock, _ = serv.accept()
-    print(f'Client #{cid} connected')
     return client_sock
 
 
@@ -25,42 +25,52 @@ def serve_client(client_sock, cid):
 
     content = load_pade(data)
     client_sock.send(content)
-    client_sock.shutdown(socket.SHUT_RDWR)
+    client_sock.close()
 
 
 def load_pade(data):
     split = data.split(' ')
 
-    path = split[1]
-    if path[len(path) - 1] == '/':
-        path += 'index.html'
+    path = '/'
+    if len(split) > 1:
+        path = split[1]
 
+    path = valid_path(path)
     method = split[0]
     _, extension = os.path.splitext(path)
+
+    is_open = False
     res_len = 0
+    res = ''
+
+    if len(path) == 0:
+        return create_http_response(403, 'default', 0).encode('utf-8')
+
+    if method != 'GET' and method != 'HEAD':
+        return create_http_response(405, 'default', 0).encode('utf-8')
+
+    if path[len(path) - 1] == '/' and len(path.split('.')) >= 2:
+        return create_http_response(404, 'default', res_len).encode('utf-8')
 
     try:
+
         if method == 'GET':
-            with open('./httptest' + path, 'rb') as file:
+            with open('.' + path, 'rb') as file:
                 res = file.read()
             res_len = len(res)
+            is_open = True
         else:
-            res_len = os.path.getsize('./httptest' + path)
+            res_len = os.path.getsize('.' + path)
 
-        return create_http_response(200, extension, res_len).encode('utf-8') + res
+        if is_open:
+            return create_http_response(200, extension, res_len).encode('utf-8') + res
+        return create_http_response(200, extension, res_len, 'close').encode('utf-8')
+
     except FileNotFoundError:
-        return create_http_response(404, 'text/html', res_len).encode('utf-8')
+        if path.endswith('index.html') and len(path.split('/')) > 3:
+            return create_http_response(403, 'default', 0).encode('utf-8')
 
-
-def create_http_response(status, c_type, c_len):
-    return f'HTTP/1.1 {status}\r\nContent-Type: {c_type}\r\nContent-Length: {c_len}\r\nServer: Aleksey/2.0\r\nDate: {datetime.datetime.now()}\r\nConnection: close\r\n\r\n'
-
-
-def reap_children(active_children):
-    for child_pid in active_children.copy():
-        child_pid, _ = os.waitpid(child_pid, os.WNOHANG)
-        if child_pid:
-            active_children.discard(child_pid)
+        return create_http_response(404, 'default', res_len).encode('utf-8')
 
 
 def run_server(port=5050):
@@ -80,4 +90,4 @@ def run_server(port=5050):
         cid += 1
 
 
-run_server()
+run_server(80)
